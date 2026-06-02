@@ -28,7 +28,7 @@ CENTCOM_WEBHOOK_SECRET=whsec_your_secret
 CENTCOM_CALLBACK_URL=https://your-app.example.com/webhooks/contro1
 ```
 
-## Approval-required tool pattern
+## 1. Short example: mark a tool for approval
 
 ```python
 from pydantic_ai import Agent
@@ -40,7 +40,7 @@ def issue_refund(customer_id: str, amount: int) -> str:
     return billing.refund(customer_id, amount)
 ```
 
-## Deferred approval handling
+## 2. Short example: create a Contro1 request
 
 Create one Contro1 request per approval-required tool call:
 
@@ -63,7 +63,60 @@ request = await centcom.create_request(
 
 Return approval results by tool call ID only after the signed Contro1 decision is verified.
 
-## Control Map before deferred execution
+## 3. Full deferred approval handler
+
+A production handler should preview routing, create the approval request, wait for a verified signed decision, return the deferred result, and log what happened.
+
+```python
+async def handle_deferred_approvals(run_id: str, requests):
+    approvals = {}
+    for call in requests.approvals:
+        preview = await centcom.post("/requests/control-map", {
+            "approval_requirements": {"required_roles": ["manager"], "required_approvals": 1},
+            "approval_policy": {
+                "mode": "threshold",
+                "required_approvals": 1,
+                "fail_closed_on_timeout": True,
+            },
+            "metadata": {
+                "integration": "pydantic-ai",
+                "tool_name": call.tool_name,
+                "tool_call_id": call.tool_call_id,
+            },
+        })
+        if not preview["satisfiable"]:
+            raise RuntimeError(f"Contro1 routing is not ready: {preview.get('warnings', [])}")
+
+        request = await centcom.create_request(
+            type="approval",
+            question=f"Approve Pydantic AI tool: {call.tool_name}?",
+            context={"args": call.args},
+            callback_url=os.environ["CENTCOM_CALLBACK_URL"],
+            required_role="manager",
+            external_request_id=f"pydantic-ai:{run_id}:{call.tool_call_id}",
+            correlation_id=run_id,
+            metadata={"integration": "pydantic-ai", "tool_name": call.tool_name},
+        )
+
+        decision = await wait_for_signed_decision(request["id"])
+        approved = bool(decision.get("response", {}).get("approved"))
+        approvals[call.tool_call_id] = approved
+
+        await centcom.log_action(
+            action="pydantic_ai.approval_resolved",
+            summary=f"Resolved approval for {call.tool_name}",
+            source={"integration": "pydantic-ai", "run_id": run_id},
+            outcome="success" if approved else "blocked",
+            correlation_id=run_id,
+            in_reply_to={"type": "request", "id": request["id"]},
+        )
+
+    return requests.build_results(approvals=approvals)
+```
+
+## 4. Control Map: who can approve right now
+
+Control Map is a pre-flight routing check. It does not approve anything and it does not create a request. It tells the agent whether the planned approval can be routed right now: mapped roles, current shift capacity, fallback reviewers, quorum, separation of duties, and warnings.
 
 Before submitting an approval-required tool call with strict reviewer requirements, preview routing with Control Map:
 
@@ -92,7 +145,7 @@ if not preview["satisfiable"]:
 
 For production deploys, vendor payments, bulk deletion, and privilege escalation, use two-person approval with `required_approvals: 2` and `separation_of_duties: True`.
 
-## Audit logging
+## 5. Log approved and autonomous tool actions
 
 After an approved tool executes, log the result in the same case:
 
@@ -106,6 +159,31 @@ await centcom.log_action(
     in_reply_to={"type": "request", "id": request_id},
 )
 ```
+
+For a low-risk tool that did not need approval:
+
+```python
+await centcom.log_action(
+    action="pydantic_ai.tool_allowed",
+    summary="Ran read-only account lookup",
+    source={"integration": "pydantic-ai", "run_id": run_id},
+    outcome="success",
+    severity="info",
+    correlation_id=run_id,
+)
+```
+
+## 6. Get evidence
+
+Use evidence when compliance or incident review needs proof of what happened.
+
+```python
+evidence = await centcom.get(f"/requests/{request_id}/evidence")
+timeline = await centcom.get(f"/cases/{run_id}")
+```
+
+- Request evidence shows one reviewed tool call: context, policy, reviewer, decision, callback, timestamps, and final response.
+- Case timeline shows all approvals and audit records that share the same `correlation_id`.
 
 ## Reference links
 
