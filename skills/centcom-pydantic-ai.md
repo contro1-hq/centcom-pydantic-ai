@@ -65,28 +65,12 @@ Return approval results by tool call ID only after the signed Contro1 decision i
 
 ## 3. Full deferred approval handler
 
-A production handler should preview routing, create the approval request, wait for a verified signed decision, return the deferred result, and log what happened.
+A production handler should create the approval request, wait for a verified signed decision, and return the deferred result.
 
 ```python
 async def handle_deferred_approvals(run_id: str, requests):
     approvals = {}
     for call in requests.approvals:
-        preview = await centcom.post("/requests/control-map", {
-            "approval_requirements": {"required_roles": ["manager"], "required_approvals": 1},
-            "approval_policy": {
-                "mode": "threshold",
-                "required_approvals": 1,
-                "fail_closed_on_timeout": True,
-            },
-            "metadata": {
-                "integration": "pydantic-ai",
-                "tool_name": call.tool_name,
-                "tool_call_id": call.tool_call_id,
-            },
-        })
-        if not preview["satisfiable"]:
-            raise RuntimeError(f"Contro1 routing is not ready: {preview.get('warnings', [])}")
-
         request = await centcom.create_request(
             type="approval",
             question=f"Approve Pydantic AI tool: {call.tool_name}?",
@@ -102,35 +86,18 @@ async def handle_deferred_approvals(run_id: str, requests):
         approved = bool(decision.get("response", {}).get("approved"))
         approvals[call.tool_call_id] = approved
 
-        await centcom.log_action(
-            action="pydantic_ai.approval_resolved",
-            summary=f"Resolved approval for {call.tool_name}",
-            source={"integration": "pydantic-ai", "run_id": run_id},
-            outcome="success" if approved else "blocked",
-            correlation_id=run_id,
-            in_reply_to={"type": "request", "id": request["id"]},
-        )
-
     return requests.build_results(approvals=approvals)
 ```
 
-## 4. Control Map: who can approve right now
+## 4. If routing fails, check who is available
 
-Control Map is a pre-flight routing check. It does not approve anything and it does not create a request. It tells the agent whether the planned approval can be routed right now: mapped roles, current shift capacity, fallback reviewers, quorum, separation of duties, and warnings.
-
-Before submitting an approval-required tool call with strict reviewer requirements, preview routing with Control Map:
+Most integrations do not need Control Map in the normal approval path. If a request cannot be routed, times out unexpectedly, or your app wants to show a clear operational error, call Control Map to see who is currently available.
 
 ```python
 preview = await centcom.post("/requests/control-map", {
     "approval_requirements": {
         "required_roles": ["manager"],
         "required_approvals": 1,
-    },
-    "approval_policy": {
-        "mode": "threshold",
-        "required_approvals": 1,
-        "separation_of_duties": False,
-        "fail_closed_on_timeout": True,
     },
     "metadata": {
         "integration": "pydantic-ai",
@@ -139,11 +106,11 @@ preview = await centcom.post("/requests/control-map", {
     },
 })
 
-if not preview["satisfiable"]:
-    raise RuntimeError(f"Contro1 routing is not ready: {preview.get('warnings', [])}")
+print(preview["satisfiable"])            # can this request be routed?
+print(preview.get("on_shift_capacity"))  # who is currently available?
+print(preview.get("fallback_reviewers")) # who can receive fallback routing?
+print(preview.get("warnings"))           # why routing may fail
 ```
-
-For production deploys, vendor payments, bulk deletion, and privilege escalation, use two-person approval with `required_approvals: 2` and `separation_of_duties: True`.
 
 ## 5. Log autonomous and post-approval tool actions
 
