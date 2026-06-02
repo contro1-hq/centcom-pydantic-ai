@@ -145,22 +145,9 @@ if not preview["satisfiable"]:
 
 For production deploys, vendor payments, bulk deletion, and privilege escalation, use two-person approval with `required_approvals: 2` and `separation_of_duties: True`.
 
-## 5. Log approved and autonomous tool actions
+## 5. Log autonomous and post-approval tool actions
 
-After an approved tool executes, log the result in the same case:
-
-```python
-await centcom.log_action(
-    action="pydantic_ai.tool_completed",
-    summary=f"Completed approved tool {call.tool_name}",
-    source={"integration": "pydantic-ai", "run_id": run_id},
-    outcome="success",
-    correlation_id=run_id,
-    in_reply_to={"type": "request", "id": request_id},
-)
-```
-
-For a low-risk tool that did not need approval:
+Every approval request already stores the reviewer decision in Contro1. Use audit records for low-risk tools that did not need approval, and optionally after an approved tool completes if you want to record what your Pydantic AI system actually did next.
 
 ```python
 await centcom.log_action(
@@ -170,6 +157,19 @@ await centcom.log_action(
     outcome="success",
     severity="info",
     correlation_id=run_id,
+)
+```
+
+For a post-approval tool result, link the audit record back to the approval request:
+
+```python
+await centcom.log_action(
+    action="pydantic_ai.tool_completed",
+    summary=f"Completed approved tool {call.tool_name}",
+    source={"integration": "pydantic-ai", "run_id": run_id},
+    outcome="success",
+    correlation_id=run_id,
+    in_reply_to={"type": "request", "id": request_id},
 )
 ```
 
