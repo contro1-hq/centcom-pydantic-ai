@@ -14,6 +14,7 @@ Use this skill when integrating Contro1 approval workflows into a Pydantic AI co
 - Convert `DeferredToolRequests` into Contro1 approval requests.
 - Use the Pydantic AI run ID or conversation ID as `correlation_id`.
 - Include the tool call ID in `external_request_id` so retries are idempotent.
+- Call Control Map before high-risk deferred tools to confirm required roles, quorum, separation of duties, and fallback routing are satisfiable.
 - Return deferred tool results only after the Contro1 decision has been verified.
 - Treat rejected, cancelled, timed_out, invalid signatures, and unknown request IDs as fail-closed for production actions.
 - Log approved follow-up actions with `in_reply_to` pointing at the Contro1 request.
@@ -61,6 +62,35 @@ request = await centcom.create_request(
 ```
 
 Return approval results by tool call ID only after the signed Contro1 decision is verified.
+
+## Control Map before deferred execution
+
+Before submitting an approval-required tool call with strict reviewer requirements, preview routing with Control Map:
+
+```python
+preview = await centcom.post("/requests/control-map", {
+    "approval_requirements": {
+        "required_roles": ["manager"],
+        "required_approvals": 1,
+    },
+    "approval_policy": {
+        "mode": "threshold",
+        "required_approvals": 1,
+        "separation_of_duties": False,
+        "fail_closed_on_timeout": True,
+    },
+    "metadata": {
+        "integration": "pydantic-ai",
+        "tool_name": call.tool_name,
+        "tool_call_id": call.tool_call_id,
+    },
+})
+
+if not preview["satisfiable"]:
+    raise RuntimeError(f"Contro1 routing is not ready: {preview.get('warnings', [])}")
+```
+
+For production deploys, vendor payments, bulk deletion, and privilege escalation, use two-person approval with `required_approvals: 2` and `separation_of_duties: True`.
 
 ## Audit logging
 
