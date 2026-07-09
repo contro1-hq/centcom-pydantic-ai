@@ -19,7 +19,7 @@ Use it when adding Contro1 approval handling to Pydantic AI tools marked with `r
 ## What this skill helps with
 
 - Creating approval requests from Pydantic AI deferred tool calls.
-- Calling Control Map before high-risk deferred tools to confirm role routing and quorum are satisfiable.
+- Optional Control Map previews for high-risk role routing and quorum workflows.
 - Using `external_request_id` for idempotent tool-call review.
 - Using `correlation_id` to keep a Pydantic AI run timeline together.
 - Handling signed callback verification before returning deferred tool results.

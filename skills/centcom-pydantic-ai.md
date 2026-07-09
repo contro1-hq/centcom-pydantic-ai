@@ -14,7 +14,7 @@ Use this skill when integrating Contro1 approval workflows into a Pydantic AI co
 - Convert `DeferredToolRequests` into Contro1 approval requests.
 - Use the Pydantic AI run ID or conversation ID as `correlation_id`.
 - Include the tool call ID in `external_request_id` so retries are idempotent.
-- Call Control Map before high-risk deferred tools to confirm required roles, quorum, separation of duties, and fallback routing are satisfiable.
+- Use Control Map when high-risk deferred tools need a preview for required roles, quorum, separation of duties, and fallback routing.
 - Return deferred tool results only after the Contro1 decision has been verified.
 - Treat rejected, cancelled, timed_out, invalid signatures, and unknown request IDs as fail-closed for production actions.
 - Log approved follow-up actions with `in_reply_to` pointing at the Contro1 request.
