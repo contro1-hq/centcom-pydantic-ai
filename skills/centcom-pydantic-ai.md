@@ -30,25 +30,35 @@ CENTCOM_CALLBACK_URL=https://your-app.example.com/webhooks/contro1
 
 ## 1. Short example: mark a tool for approval
 
+Give the deferred tool's own argument model a required `reason` field, so the model must produce its justification as part of the structured tool call arguments, not as a separate follow-up question:
+
 ```python
 from pydantic_ai import Agent
 
 agent = Agent("openai:gpt-5")
 
 @agent.tool_plain(requires_approval=True)
-def issue_refund(customer_id: str, amount: int) -> str:
+def issue_refund(customer_id: str, amount: int, reason: str) -> str:
     return billing.refund(customer_id, amount)
 ```
 
 ## 2. Short example: create a Contro1 request
 
-Create one Contro1 request per approval-required tool call:
+Create one Contro1 request per approval-required tool call, building `context` from three sources: `call.args` copied verbatim (the exact tool input), the message/event that started the run, and the `reason` field the model was required to supply on the argument model above. Keep those apart as `machine_observed` (copied facts) vs `agent_reported` (model-written text):
 
 ```python
 request = await centcom.create_request(
     type="approval",
     question=f"Approve Pydantic AI tool: {call.tool_name}?",
-    context={"args": call.args},
+    context={
+        "action": {"tool": call.tool_name, "input": call.args},
+        "machine_observed": {
+            "triggered_by": triggering_message,
+        },
+        "agent_reported": {
+            "justification": call.args.get("reason", ""),
+        },
+    },
     callback_url=os.environ["CENTCOM_CALLBACK_URL"],
     required_role="manager",
     external_request_id=f"pydantic-ai:{run_id}:{call.tool_call_id}",
@@ -68,13 +78,21 @@ Return approval results by tool call ID only after the signed Contro1 decision i
 A production handler should create the approval request, wait for a verified signed decision, and return the deferred result.
 
 ```python
-async def handle_deferred_approvals(run_id: str, requests):
+async def handle_deferred_approvals(run_id: str, triggering_message: str, requests):
     approvals = {}
     for call in requests.approvals:
         request = await centcom.create_request(
             type="approval",
             question=f"Approve Pydantic AI tool: {call.tool_name}?",
-            context={"args": call.args},
+            context={
+                "action": {"tool": call.tool_name, "input": call.args},
+                "machine_observed": {
+                    "triggered_by": triggering_message,
+                },
+                "agent_reported": {
+                    "justification": call.args.get("reason", ""),
+                },
+            },
             callback_url=os.environ["CENTCOM_CALLBACK_URL"],
             required_role="manager",
             external_request_id=f"pydantic-ai:{run_id}:{call.tool_call_id}",
